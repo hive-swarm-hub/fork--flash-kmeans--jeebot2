@@ -301,9 +301,8 @@ def _euclid_assign_kernel(
         # Compute cross term (BLOCK_N, BLOCK_K) = x_tile @ c_tile
         cross = tl.dot(x_tile, c_tile, max_num_imprecise_acc=32).to(tl.float32)
 
-        # Squared Euclidean distance
+        # Squared Euclidean distance (no clamp needed - argmin ordering preserved)
         dist = x_sq_tile[:, None] + cent_sq[None, :] - 2.0 * cross
-        dist = tl.maximum(dist, 0.0)
 
         # Mask out invalid centroid columns before reduction
         dist = tl.where(k_mask[None, :], dist, 3.4e38)
