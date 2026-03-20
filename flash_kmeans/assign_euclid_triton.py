@@ -24,18 +24,21 @@ def _compute_sq_norms_kernel(
     stride_x_b, stride_x_n, stride_x_d,
     stride_out_b, stride_out_n,
     N: tl.constexpr, D: tl.constexpr,
+    BLOCK_N: tl.constexpr = 128,
 ):
     pid = tl.program_id(0)
     pid_b = tl.program_id(1)
     pid_b = pid_b.to(tl.int64)
-    n_idx = pid.to(tl.int64)
-    if n_idx >= N:
-        return
+    n_start = pid * BLOCK_N
+    n_offs = n_start + tl.arange(0, BLOCK_N)
+    n_offs_64 = n_offs.to(tl.int64)
+    n_mask = n_offs < N
     offs_d = tl.arange(0, D).to(tl.int64)
-    x_ptrs = x_ptr + pid_b * stride_x_b + n_idx * stride_x_n + offs_d * stride_x_d
-    x_vals = tl.load(x_ptrs).to(tl.float32)
-    sq_norm = tl.sum(x_vals * x_vals)
-    tl.store(out_ptr + pid_b * stride_out_b + n_idx * stride_out_n, sq_norm)
+    x_ptrs = x_ptr + pid_b * stride_x_b + n_offs_64[:, None] * stride_x_n + offs_d[None, :] * stride_x_d
+    x_vals = tl.load(x_ptrs, mask=n_mask[:, None], other=0.0).to(tl.float32)
+    sq_norms = tl.sum(x_vals * x_vals, axis=1)
+    out_ptrs = out_ptr + pid_b * stride_out_b + n_offs_64 * stride_out_n
+    tl.store(out_ptrs, sq_norms, mask=n_mask)
 
 
 def compute_sq_norms(x, out=None):
@@ -47,11 +50,13 @@ def compute_sq_norms(x, out=None):
         x = x.unsqueeze(0)
     if out is None:
         out = torch.empty((B, N), device=x.device, dtype=torch.float32 if x.dtype == torch.float32 else x.dtype)
-    _compute_sq_norms_kernel[(N, B)](
+    BLOCK_N = 128
+    grid = (_ceil_div(N, BLOCK_N), B)
+    _compute_sq_norms_kernel[grid](
         x, out,
         x.stride(0), x.stride(1), x.stride(2),
         out.stride(0), out.stride(1),
-        N=N, D=D,
+        N=N, D=D, BLOCK_N=BLOCK_N,
     )
     return out
 
