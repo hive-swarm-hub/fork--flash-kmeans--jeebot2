@@ -79,7 +79,7 @@ def batch_kmeans_Euclid(
     B, N, D = x.shape
 
     # Pre-compute squared L2 norm of all points (constant during iterations)
-    x_sq = (x ** 2).sum(dim=-1)  # (B, N)
+    x_sq = torch.sum(x * x, dim=-1)  # (B, N)
 
     if init_centroids is None:
         # Randomly select initial centers from x
@@ -101,22 +101,27 @@ def batch_kmeans_Euclid(
     # Pre-allocate centroid update buffers
     centroid_sums = torch.zeros((B, n_clusters, D), device=x.device, dtype=torch.float32)
     centroid_cnts = torch.zeros((B, n_clusters), device=x.device, dtype=torch.int32)
+    c_sq = torch.empty((B, n_clusters), device=x.device, dtype=x.dtype)
 
     # Cache heuristic config (avoid repeated GPU property queries)
     cached_config = _heuristic_euclid_config(N, n_clusters, D, device=x.device) if use_heuristic else None
 
+    use_atomic = n_clusters <= 256
+    update_block_n = 64 if n_clusters >= 4096 else 128
+
     for it in range(max_iters):
-        # Pre-compute centroid squared norms
-        c_sq = (centroids ** 2).sum(-1)
+        # Pre-compute centroid squared norms (reuse buffer)
+        torch.sum(centroids * centroids, dim=-1, out=c_sq)
 
         cluster_ids = euclid_assign_triton(x, centroids, x_sq, out=out, c_sq=c_sq,
                                            config=cached_config, use_heuristic=False)
-        if n_clusters <= 256:
+        if use_atomic:
             centroids_new = triton_centroid_update_euclid(x, cluster_ids, centroids,
                                                           centroid_sums=centroid_sums,
                                                           centroid_counts=centroid_cnts)
         else:
             centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids,
+                                                                  BLOCK_N=update_block_n,
                                                                   centroid_sums=centroid_sums,
                                                                   centroid_cnts=centroid_cnts)
 
