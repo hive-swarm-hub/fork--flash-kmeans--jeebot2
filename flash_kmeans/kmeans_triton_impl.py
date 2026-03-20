@@ -119,20 +119,12 @@ def batch_kmeans_Euclid(
     """
     B, N, D = x.shape
 
-    # Pre-compute squared L2 norm of all points (constant during iterations)
-    x_sq = compute_sq_norms(x)  # (B, N) - fused Triton kernel
-
+    # Setup centroids
     if init_centroids is None:
-        # Randomly select initial centers from x
         indices = torch.randint(0, N, (B, n_clusters), device=x.device)
-        centroids = torch.gather(
-            x,
-            dim=1,
-            index=indices[..., None].expand(-1, -1, D)
-        )  # (B, n_clusters, D)
+        centroids = torch.gather(x, dim=1, index=indices[..., None].expand(-1, -1, D))
     else:
         centroids = init_centroids
-
     centroids = centroids.view(B, n_clusters, D)
 
     check_convergence = tol > 0
@@ -146,7 +138,7 @@ def batch_kmeans_Euclid(
         entry.call_count += 1
 
         if entry.graph is not None:
-            # Replay: copy new init_centroids into static buffer
+            # Replay: copy new init_centroids, skip x_sq recompute (cached in graph)
             entry.static_centroids.copy_(centroids, non_blocking=True)
             entry.graph.replay()
             return entry.static_out, entry.final_centroids, max_iters
@@ -168,7 +160,7 @@ def batch_kmeans_Euclid(
             entry.static_c_sq = torch.empty((B, K), device=x.device, dtype=x.dtype)
             entry.centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
             entry.centroid_cnts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
-            entry.static_x_sq = x_sq  # x never changes between calls
+            entry.static_x_sq = compute_sq_norms(x)  # x never changes between calls
 
             cached_config = _heuristic_euclid_config(N, K, D, device=x.device)
 
@@ -200,6 +192,9 @@ def batch_kmeans_Euclid(
             return entry.static_out, entry.final_centroids, max_iters
 
     # Normal (non-graph) path
+    # Pre-compute squared L2 norm of all points (constant during iterations)
+    x_sq = compute_sq_norms(x)  # (B, N)
+
     # Pre-allocate output buffer
     out = torch.empty((B, N), device=x.device, dtype=torch.int32)
 
