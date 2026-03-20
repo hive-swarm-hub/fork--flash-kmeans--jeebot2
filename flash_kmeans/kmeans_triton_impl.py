@@ -82,7 +82,8 @@ def batch_kmeans_Euclid(
     c_sq = torch.empty((B, K), device=x.device, dtype=torch.float32)
 
     # Choose centroid update strategy based on K
-    use_atomic = K <= 1024
+    # Atomic is better for small K (less sort overhead), sorted for large K
+    use_atomic = K <= 512
 
     for it in range(max_iters):
         # Compute c_sq in native dtype for speed
