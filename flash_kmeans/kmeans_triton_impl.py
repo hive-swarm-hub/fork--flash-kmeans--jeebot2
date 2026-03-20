@@ -109,10 +109,9 @@ def batch_kmeans_Euclid(
     use_atomic = n_clusters <= 256
     update_block_n = 64 if n_clusters >= 4096 else 128
 
-    # First iteration: compute c_sq before the loop
-    torch.sum(centroids * centroids, dim=-1, out=c_sq)
-
     for it in range(max_iters):
+        torch.sum(centroids * centroids, dim=-1, out=c_sq)
+
         cluster_ids = euclid_assign_triton(x, centroids, x_sq, out=out, c_sq=c_sq,
                                            config=cached_config, use_heuristic=False)
         if use_atomic:
@@ -133,8 +132,6 @@ def batch_kmeans_Euclid(
                 break
 
         centroids = centroids_new
-        # Compute c_sq for next iteration (overlaps with any pending GPU work)
-        torch.sum(centroids * centroids, dim=-1, out=c_sq)
 
     return cluster_ids, centroids, it + 1
 
