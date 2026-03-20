@@ -79,7 +79,7 @@ def batch_kmeans_Euclid(
     B, N, D = x.shape
 
     # Pre-compute squared L2 norm of all points (constant during iterations)
-    x_sq = torch.sum(x * x, dim=-1)  # (B, N)
+    x_sq = compute_sq_norms(x)  # (B, N) - fused Triton kernel
 
     if init_centroids is None:
         # Randomly select initial centers from x
