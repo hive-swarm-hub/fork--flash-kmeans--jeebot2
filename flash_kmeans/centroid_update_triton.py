@@ -216,8 +216,6 @@ def _centroid_update_chunk_kernel(
     all_tokens_idxs = tl.load(idx_batch_base + token_idx * stride_idx_n, mask=valid_tok, other=-1) # [BLOCK_N]
     all_tokens_idxs = all_tokens_idxs.to(tl.int64)
 
-    load_mask = all_tokens_idxs[:,None] * D + offs_dim[None,:]
-
     for cid in range(first_id, last_id + 1):
         cluster_mask = all_ids == cid
         cluster_size = tl.sum(cluster_mask.to(tl.int32))

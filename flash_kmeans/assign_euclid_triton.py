@@ -117,14 +117,8 @@ def _heuristic_euclid_config(
         num_stages = 1
 
         if D >= 256:
-            block_k = 64
-            num_warps = 8
-        elif K <= 256:
             block_k = 128
-        elif K <= 1024:
-            block_k = 128
-        else:
-            block_k = 128
+            num_warps = 4
 
         return {
             "BLOCK_N": block_n,
