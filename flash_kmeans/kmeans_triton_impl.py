@@ -81,10 +81,6 @@ def batch_kmeans_Euclid(
     out = torch.empty((B, N), device=x.device, dtype=torch.int32)
     c_sq = torch.empty((B, K), device=x.device, dtype=torch.float32)
 
-    # Choose centroid update strategy based on K
-    # Atomic is better for small K (less sort overhead), sorted for large K
-    use_atomic = K <= 512
-
     for it in range(max_iters):
         # Compute c_sq in native dtype for speed
         c_sq.copy_((centroids ** 2).sum(-1))
@@ -95,10 +91,7 @@ def batch_kmeans_Euclid(
         )
 
         # Centroid update
-        if use_atomic:
-            centroids_new = triton_centroid_update_euclid(x, cluster_ids, centroids)
-        else:
-            centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids)
+        centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids)
 
         if not skip_shift:
             center_shift = (centroids_new - centroids).norm(dim=-1).max()
