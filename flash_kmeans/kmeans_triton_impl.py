@@ -109,20 +109,24 @@ def batch_kmeans_Euclid(
     use_atomic = n_clusters <= 256
     update_block_n = 128
 
-    for it in range(max_iters):
-        compute_sq_norms(centroids, out=c_sq)
+    # First c_sq computation
+    compute_sq_norms(centroids, out=c_sq)
 
+    for it in range(max_iters):
         cluster_ids = euclid_assign_triton(x, centroids, x_sq, out=out, c_sq=c_sq,
                                            config=cached_config, use_heuristic=False)
+        # Centroid update + fused c_sq for next iteration
         if use_atomic:
             centroids_new = triton_centroid_update_euclid(x, cluster_ids, centroids,
                                                           centroid_sums=centroid_sums,
-                                                          centroid_counts=centroid_cnts)
+                                                          centroid_counts=centroid_cnts,
+                                                          c_sq_out=c_sq)
         else:
             centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids,
                                                                   BLOCK_N=update_block_n,
                                                                   centroid_sums=centroid_sums,
-                                                                  centroid_cnts=centroid_cnts)
+                                                                  centroid_cnts=centroid_cnts,
+                                                                  c_sq_out=c_sq)
 
         if check_convergence or verbose:
             center_shift = (centroids_new - centroids).norm(dim=-1).max()
