@@ -206,7 +206,7 @@ def batch_kmeans_Euclid(
     # Cache heuristic config (avoid repeated GPU property queries)
     cached_config = _heuristic_euclid_config(N, n_clusters, D, device=x.device) if use_heuristic else None
 
-    use_atomic = n_clusters <= 256
+    use_atomic = False  # sorted path is faster even for small K
     update_block_n = 128
 
     # Pre-allocate sort buffers for centroid update
