@@ -156,15 +156,10 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
         BLOCK_D=BLOCK_D,
     )
 
-    # Compute means; keep old centroid if empty cluster
-    counts_f = centroid_counts.to(torch.float32).unsqueeze(-1).clamp(min=1.0)
-    centroids = centroid_sums / counts_f
-
-    # For clusters with zero count, revert to old centroids
-    zero_mask = (centroid_counts == 0).unsqueeze(-1)
-    centroids = torch.where(zero_mask, old_centroids.to(torch.float32), centroids)
-
-    return centroids.to(x.dtype)
+    counts_f = centroid_counts.float().unsqueeze(-1).clamp_(min=1.0)
+    centroids = (centroid_sums / counts_f).to(x.dtype)
+    empty_mask = (centroid_counts == 0).unsqueeze(-1)
+    return torch.where(empty_mask, old_centroids, centroids)
 
 
 # ------------------------------ NEW: chunk-wise centroid update (sorted ids) ------------------------------
@@ -354,12 +349,10 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     )
 
     if calculate_new:
-        # Convert sums to means; replace empty clusters with old centroids
-        counts_f = centroid_cnts.to(torch.float32).unsqueeze(-1).clamp(min=1.0)
-        centroids = centroid_sums / counts_f
+        counts_f = centroid_cnts.float().unsqueeze(-1).clamp_(min=1.0)
+        centroids = (centroid_sums / counts_f).to(x.dtype)
         empty_mask = (centroid_cnts == 0).unsqueeze(-1)
-        centroids = torch.where(empty_mask, old_centroids.to(torch.float32), centroids)
-        return centroids.to(x.dtype)
+        return torch.where(empty_mask, old_centroids, centroids)
     else:
         return None
 # ------------------------------ END new implementation ------------------------------
