@@ -92,9 +92,6 @@ def batch_kmeans_Euclid(
         from flash_kmeans.assign_euclid_triton import _heuristic_euclid_config
         heuristic_config = _heuristic_euclid_config(N, K, D, device=x.device)
 
-    # Pre-allocate centroid output to avoid allocation each iteration
-    centroids_buf = torch.empty_like(centroids)
-
     for it in range(max_iters):
         # Compute c_sq in native dtype for speed
         torch.sum(centroids * centroids, dim=-1, out=c_sq)
@@ -130,9 +127,7 @@ def batch_kmeans_Euclid(
             if center_shift < tol:
                 break
 
-        # Swap buffers to avoid allocation
-        centroids, centroids_buf = centroids_new, centroids
-        # centroids_buf can be reused next iteration
+        centroids = centroids_new
 
     return cluster_ids, centroids, it + 1
 
