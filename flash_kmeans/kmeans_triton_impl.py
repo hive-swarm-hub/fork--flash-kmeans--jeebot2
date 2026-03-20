@@ -107,7 +107,7 @@ def batch_kmeans_Euclid(
     cached_config = _heuristic_euclid_config(N, n_clusters, D, device=x.device) if use_heuristic else None
 
     use_atomic = n_clusters <= 256
-    update_block_n = 64 if n_clusters >= 4096 else 128
+    update_block_n = 128
 
     # First c_sq computation
     compute_sq_norms(centroids, out=c_sq)
