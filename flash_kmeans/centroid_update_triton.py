@@ -294,7 +294,8 @@ def triton_centroid_update_sorted_cosine(x_norm: torch.Tensor, cluster_ids: torc
 
 def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
                                          *, BLOCK_N: int = 128, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None, calculate_new: bool = True,
-                                         c_sq_out: torch.Tensor = None):
+                                         c_sq_out: torch.Tensor = None,
+                                         sort_vals_buf: torch.Tensor = None, sort_idx_buf: torch.Tensor = None):
     """Fast centroid update for *Euclidean* KMeans assuming cluster IDs are pre-sorted.
 
     Parameters
@@ -323,8 +324,12 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     B, N, D = x.shape
     K = old_centroids.shape[1]
 
-    # Batch-wise sort of cluster assignments
-    sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1, stable=False)
+    # Batch-wise sort of cluster assignments (with optional pre-allocated buffers)
+    if sort_vals_buf is not None and sort_idx_buf is not None:
+        torch.sort(cluster_ids, dim=-1, stable=False, out=(sort_vals_buf, sort_idx_buf))
+        sorted_cluster_ids, sorted_idx = sort_vals_buf, sort_idx_buf
+    else:
+        sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1, stable=False)
 
     if centroid_sums is None:
         centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)

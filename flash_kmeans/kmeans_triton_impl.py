@@ -109,6 +109,13 @@ def batch_kmeans_Euclid(
     use_atomic = n_clusters <= 256
     update_block_n = 128
 
+    # Pre-allocate sort buffers for centroid update
+    if not use_atomic:
+        sort_vals_buf = torch.empty((B, N), device=x.device, dtype=torch.int32)
+        sort_idx_buf = torch.empty((B, N), device=x.device, dtype=torch.int64)
+    else:
+        sort_vals_buf = sort_idx_buf = None
+
     # First c_sq computation
     compute_sq_norms(centroids, out=c_sq)
 
@@ -126,7 +133,9 @@ def batch_kmeans_Euclid(
                                                                   BLOCK_N=update_block_n,
                                                                   centroid_sums=centroid_sums,
                                                                   centroid_cnts=centroid_cnts,
-                                                                  c_sq_out=c_sq)
+                                                                  c_sq_out=c_sq,
+                                                                  sort_vals_buf=sort_vals_buf,
+                                                                  sort_idx_buf=sort_idx_buf)
 
         if check_convergence or verbose:
             center_shift = (centroids_new - centroids).norm(dim=-1).max()
