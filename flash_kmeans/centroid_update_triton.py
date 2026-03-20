@@ -293,7 +293,7 @@ def triton_centroid_update_sorted_cosine(x_norm: torch.Tensor, cluster_ids: torc
     return centroids
 
 def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
-                                         *, BLOCK_N: int = 256, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None, calculate_new: bool = True):
+                                         *, BLOCK_N: int = 128, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None, calculate_new: bool = True):
     """Fast centroid update for *Euclidean* KMeans assuming cluster IDs are pre-sorted.
 
     Parameters
