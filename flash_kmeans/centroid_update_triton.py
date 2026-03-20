@@ -121,32 +121,20 @@ def torch_loop_centroid_update_cosine(x_norm: torch.Tensor, cluster_ids: torch.T
 
 
 def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor):
-    """Compute centroids for Euclidean KMeans using Triton.
-
-    Args:
-        x (Tensor): (B, N, D) input vectors (float16/float32)
-        cluster_ids (LongTensor): (B, N) cluster assignment per point
-        old_centroids (Tensor): (B, K, D) previous centroids (same dtype as x)
-
-    Returns:
-        Tensor: (B, K, D) updated centroids (dtype == x.dtype)
-    """
-    assert x.is_cuda and cluster_ids.is_cuda, "Input tensors must be on CUDA device"
+    """Compute centroids for Euclidean KMeans using Triton."""
     B, N, D = x.shape
     K = old_centroids.shape[1]
-    assert cluster_ids.shape == (B, N)
 
-    # Allocate accumulation buffers
     centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
     centroid_counts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
 
     total_tokens = B * N
-    BLOCK_D = 128  # tuneable
+    BLOCK_D = 128
     grid = (total_tokens,)
 
     _centroid_update_kernel[grid](
         x,
-        cluster_ids.to(torch.int32),
+        cluster_ids,
         centroid_sums,
         centroid_counts,
         x.stride(0), x.stride(1), x.stride(2),
@@ -157,12 +145,12 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
     )
 
     # Compute means; keep old centroid if empty cluster
-    counts_f = centroid_counts.to(torch.float32).unsqueeze(-1).clamp(min=1.0)
+    counts_f = centroid_counts.unsqueeze(-1).clamp(min=1).float()
     centroids = centroid_sums / counts_f
 
     # For clusters with zero count, revert to old centroids
     zero_mask = (centroid_counts == 0).unsqueeze(-1)
-    centroids = torch.where(zero_mask, old_centroids.to(torch.float32), centroids)
+    centroids = torch.where(zero_mask, old_centroids.float(), centroids)
 
     return centroids.to(x.dtype)
 
@@ -319,29 +307,24 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
         centroids_new : Tensor [B, K, D] or None
             Updated centroids if `calculate_new` is True; otherwise None.
     """
-    assert x.is_cuda and cluster_ids.is_cuda, "Inputs must be on CUDA device"
     B, N, D = x.shape
     K = old_centroids.shape[1]
 
     # Batch-wise sort of cluster assignments
     sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1)
-    sorted_idx_int = sorted_idx.to(torch.int32)
+    sorted_idx_int = sorted_idx.int()
 
     if centroid_sums is None:
         centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
-    else:
-        assert centroid_sums.shape == (B, K, D)
-    
+
     if centroid_cnts is None:
-        centroid_cnts = torch.zeros((B, K),    device=x.device, dtype=torch.int32)
-    else:
-        assert centroid_cnts.shape == (B, K)
+        centroid_cnts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
 
     grid = (triton.cdiv(N, BLOCK_N), B)
     _centroid_update_chunk_kernel[grid](
-        x,                       # original features
-        sorted_idx_int,          # gather indices
-        sorted_cluster_ids.to(torch.int32),
+        x,
+        sorted_idx_int,
+        sorted_cluster_ids.int(),
         centroid_sums,
         centroid_cnts,
         x.stride(0), x.stride(1), x.stride(2),
@@ -354,11 +337,10 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     )
 
     if calculate_new:
-        # Convert sums to means; replace empty clusters with old centroids
-        counts_f = centroid_cnts.to(torch.float32).unsqueeze(-1).clamp(min=1.0)
+        counts_f = centroid_cnts.unsqueeze(-1).clamp(min=1).float()
         centroids = centroid_sums / counts_f
         empty_mask = (centroid_cnts == 0).unsqueeze(-1)
-        centroids = torch.where(empty_mask, old_centroids.to(torch.float32), centroids)
+        centroids = torch.where(empty_mask, old_centroids.float(), centroids)
         return centroids.to(x.dtype)
     else:
         return None

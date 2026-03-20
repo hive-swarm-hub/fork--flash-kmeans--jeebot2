@@ -405,18 +405,8 @@ def euclid_assign_triton(
         config        : {"BLOCK_N","BLOCK_K","num_warps","num_stages"} to force a config
         use_heuristic : use a fixed heuristic config instead of autotune
     """
-    assert x.is_cuda and centroids.is_cuda and x_sq.is_cuda, "All tensors must be on CUDA"
-    # assert x.dtype in (torch.float16, torch.float32), "x must be fp16/fp32"
-    assert centroids.dtype == x.dtype, "centroids dtype mismatch"
-
     B, N, D = x.shape
     K = centroids.shape[1]
-    assert centroids.shape == (B, K, D), "centroids shape mismatch"
-    assert x_sq.shape == (B, N), "x_sq shape mismatch"
-
-    # x = x.contiguous()
-    # centroids = centroids.contiguous()
-    # x_sq = x_sq.contiguous()
 
     if out is None:
         out = torch.empty((B, N), device=x.device, dtype=torch.int32)
