@@ -286,7 +286,7 @@ def _euclid_assign_kernel(
 
         # Load precomputed c_sq (BLOCK_K,)
         csq_ptrs = c_sq_ptr + pid_b * stride_csq_b + k_offsets * stride_csq_k
-        cent_sq = tl.load(csq_ptrs, mask=k_mask, other=0.0, eviction_policy='evict_last').to(tl.float32)
+        cent_sq = tl.load(csq_ptrs, mask=k_mask, other=0.0).to(tl.float32)
 
         # Cross term (BLOCK_N, BLOCK_K) = x_tile @ c_tile
         cross = tl.dot(x_tile, c_tile, out_dtype=tl.float32, max_num_imprecise_acc=D)
