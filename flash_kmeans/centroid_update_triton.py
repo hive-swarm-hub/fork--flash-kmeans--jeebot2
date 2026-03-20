@@ -249,7 +249,7 @@ def triton_centroid_update_sorted_cosine(x_norm: torch.Tensor, cluster_ids: torc
 
     # -------- sort per-batch --------
     sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1)
-    sorted_idx_int = sorted_idx.to(torch.int32)
+    sorted_idx = sorted_idx.to(torch.int32)
 
     # accumulation buffers
     centroid_sums = torch.zeros((B, K, D), device=x_norm.device, dtype=torch.float32)
@@ -258,12 +258,12 @@ def triton_centroid_update_sorted_cosine(x_norm: torch.Tensor, cluster_ids: torc
     grid = (triton.cdiv(N, BLOCK_N), B)
     _centroid_update_chunk_kernel[grid](
         x_norm,
-        sorted_idx_int,
+        sorted_idx,
         sorted_cluster_ids.to(torch.int32),
         centroid_sums,
         centroid_cnts,
         x_norm.stride(0), x_norm.stride(1), x_norm.stride(2),
-        sorted_idx_int.stride(0), sorted_idx_int.stride(1),
+        sorted_idx.stride(0), sorted_idx.stride(1),
         sorted_cluster_ids.stride(0), sorted_cluster_ids.stride(1),
         centroid_sums.stride(0), centroid_sums.stride(1), centroid_sums.stride(2),
         centroid_cnts.stride(0), centroid_cnts.stride(1),
@@ -312,7 +312,6 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
 
     # Batch-wise sort of cluster assignments
     sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1, stable=False)
-    sorted_idx_int = sorted_idx.int()
 
     if centroid_sums is None:
         centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
@@ -328,12 +327,12 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     sorted_cids = sorted_cluster_ids if sorted_cluster_ids.dtype == torch.int32 else sorted_cluster_ids.to(torch.int32)
     _centroid_update_chunk_kernel[grid](
         x,                       # original features
-        sorted_idx_int,          # gather indices
+        sorted_idx,          # gather indices
         sorted_cids,
         centroid_sums,
         centroid_cnts,
         x.stride(0), x.stride(1), x.stride(2),
-        sorted_idx_int.stride(0), sorted_idx_int.stride(1),
+        sorted_idx.stride(0), sorted_idx.stride(1),
         sorted_cluster_ids.stride(0), sorted_cluster_ids.stride(1),
         centroid_sums.stride(0), centroid_sums.stride(1), centroid_sums.stride(2),
         centroid_cnts.stride(0), centroid_cnts.stride(1),
