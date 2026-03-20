@@ -316,8 +316,8 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     B, N, D = x.shape
     K = old_centroids.shape[1]
 
-    # Batch-wise sort of cluster assignments
-    sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1)
+    # Batch-wise sort of cluster assignments (stable=False can be faster)
+    sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1, stable=False)
     sorted_idx_int = sorted_idx.to(torch.int32)
 
     if centroid_sums is None:
