@@ -4,6 +4,7 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
+export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
 # --- Helper: output summary and exit ---
 summary() {
