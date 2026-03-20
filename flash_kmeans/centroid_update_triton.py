@@ -122,7 +122,7 @@ def torch_loop_centroid_update_cosine(x_norm: torch.Tensor, cluster_ids: torch.T
 
 def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
                                   *, centroid_sums: torch.Tensor = None, centroid_counts: torch.Tensor = None,
-                                  c_sq_out: torch.Tensor = None):
+                                  c_sq_out: torch.Tensor = None, centroids_out: torch.Tensor = None):
     """Compute centroids for Euclidean KMeans using Triton."""
     B, N, D = x.shape
     K = old_centroids.shape[1]
@@ -153,7 +153,8 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
         BLOCK_D=BLOCK_D,
     )
 
-    centroids_out = torch.empty_like(old_centroids)
+    if centroids_out is None:
+        centroids_out = torch.empty_like(old_centroids)
     compute_csq = c_sq_out is not None
     if not compute_csq:
         c_sq_out = old_centroids.new_empty(0)
@@ -295,7 +296,8 @@ def triton_centroid_update_sorted_cosine(x_norm: torch.Tensor, cluster_ids: torc
 def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
                                          *, BLOCK_N: int = 128, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None, calculate_new: bool = True,
                                          c_sq_out: torch.Tensor = None,
-                                         sort_vals_buf: torch.Tensor = None, sort_idx_buf: torch.Tensor = None):
+                                         sort_vals_buf: torch.Tensor = None, sort_idx_buf: torch.Tensor = None,
+                                         centroids_out: torch.Tensor = None):
     """Fast centroid update for *Euclidean* KMeans assuming cluster IDs are pre-sorted.
 
     Parameters
@@ -360,7 +362,8 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     )
 
     if calculate_new:
-        centroids_out = torch.empty_like(old_centroids)
+        if centroids_out is None:
+            centroids_out = torch.empty_like(old_centroids)
         compute_csq = c_sq_out is not None
         if not compute_csq:
             c_sq_out = old_centroids.new_empty(0)
