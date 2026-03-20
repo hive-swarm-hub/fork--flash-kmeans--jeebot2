@@ -390,20 +390,17 @@ def _finalize_centroids_kernel(
         return
     count = tl.load(counts_ptr + pid_b * stride_c_b + k_idx * stride_c_k)
     offs_d = tl.arange(0, D).to(tl.int64)
+    out_base = out_ptr + pid_b * stride_out_b + k_idx * stride_out_k
     if count > 0:
-        count_f = count.to(tl.float32)
         sums = tl.load(sums_ptr + pid_b * stride_s_b + k_idx * stride_s_k + offs_d * stride_s_d)
-        result = (sums / count_f).to(tl.float16)
-        tl.store(out_ptr + pid_b * stride_out_b + k_idx * stride_out_k + offs_d * stride_out_d, result)
-        if COMPUTE_CSQ:
-            sq_norm = tl.sum(result.to(tl.float32) * result.to(tl.float32))
-            tl.store(csq_ptr + pid_b * stride_csq_b + k_idx * stride_csq_k, sq_norm.to(tl.float16))
+        result = (sums / count.to(tl.float32)).to(tl.float16)
     else:
-        old_vals = tl.load(old_ptr + pid_b * stride_o_b + k_idx * stride_o_k + offs_d * stride_o_d)
-        tl.store(out_ptr + pid_b * stride_out_b + k_idx * stride_out_k + offs_d * stride_out_d, old_vals)
-        if COMPUTE_CSQ:
-            sq_norm = tl.sum(old_vals.to(tl.float32) * old_vals.to(tl.float32))
-            tl.store(csq_ptr + pid_b * stride_csq_b + k_idx * stride_csq_k, sq_norm.to(tl.float16))
+        result = tl.load(old_ptr + pid_b * stride_o_b + k_idx * stride_o_k + offs_d * stride_o_d)
+    tl.store(out_base + offs_d * stride_out_d, result)
+    if COMPUTE_CSQ:
+        result_f = result.to(tl.float32)
+        sq_norm = tl.sum(result_f * result_f)
+        tl.store(csq_ptr + pid_b * stride_csq_b + k_idx * stride_csq_k, sq_norm.to(tl.float16))
 
 
 def torch_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
