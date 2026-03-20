@@ -99,10 +99,6 @@ def _heuristic_euclid_config(
             num_warps = 4
             num_stages = 4
 
-        # Smaller N favors smaller BLOCK_N to reduce wasted work.
-        if N < 65536:
-            block_n = 64
-
         return {
             "BLOCK_N": block_n,
             "BLOCK_K": block_k,
