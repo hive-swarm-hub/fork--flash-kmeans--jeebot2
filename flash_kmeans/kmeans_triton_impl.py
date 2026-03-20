@@ -80,6 +80,8 @@ def batch_kmeans_Euclid(
     # Pre-allocate reusable buffers
     out = torch.empty((B, N), device=x.device, dtype=torch.int32)
     c_sq = torch.empty((B, K), device=x.device, dtype=torch.float32)
+    centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
+    centroid_cnts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
 
     for it in range(max_iters):
         # Compute c_sq in native dtype for speed
@@ -90,8 +92,15 @@ def batch_kmeans_Euclid(
             x, centroids, x_sq, out=out, c_sq=c_sq, use_heuristic=use_heuristic
         )
 
-        # Centroid update
-        centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids)
+        # Centroid update with pre-allocated buffers
+        centroid_sums.zero_()
+        centroid_cnts.zero_()
+        centroids_new = triton_centroid_update_sorted_euclid(
+            x, cluster_ids, centroids,
+            BLOCK_N=128,
+            centroid_sums=centroid_sums,
+            centroid_cnts=centroid_cnts,
+        )
 
         if not skip_shift:
             center_shift = (centroids_new - centroids).norm(dim=-1).max()
