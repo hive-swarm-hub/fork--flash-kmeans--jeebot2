@@ -144,9 +144,10 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
     BLOCK_D = 128  # tuneable
     grid = (total_tokens,)
 
+    ids_i32 = cluster_ids if cluster_ids.dtype == torch.int32 else cluster_ids.to(torch.int32)
     _centroid_update_kernel[grid](
         x,
-        cluster_ids.to(torch.int32),
+        ids_i32,
         centroid_sums,
         centroid_counts,
         x.stride(0), x.stride(1), x.stride(2),
@@ -333,10 +334,11 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
         assert centroid_cnts.shape == (B, K)
 
     grid = (triton.cdiv(N, BLOCK_N), B)
+    sorted_cids = sorted_cluster_ids if sorted_cluster_ids.dtype == torch.int32 else sorted_cluster_ids.to(torch.int32)
     _centroid_update_chunk_kernel[grid](
         x,                       # original features
         sorted_idx_int,          # gather indices
-        sorted_cluster_ids.to(torch.int32),
+        sorted_cids,
         centroid_sums,
         centroid_cnts,
         x.stride(0), x.stride(1), x.stride(2),
