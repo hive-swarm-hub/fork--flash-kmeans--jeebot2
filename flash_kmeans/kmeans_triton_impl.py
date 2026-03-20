@@ -114,9 +114,11 @@ def batch_kmeans_Euclid(
         else:
             centroid_sums.zero_()
             centroid_cnts.zero_()
+            # Smaller BLOCK_N for large K (more unique clusters per chunk)
+            update_block_n = 64 if K >= 4096 else 128
             centroids_new = triton_centroid_update_sorted_euclid(
                 x, cluster_ids, centroids,
-                BLOCK_N=128,
+                BLOCK_N=update_block_n,
                 centroid_sums=centroid_sums,
                 centroid_cnts=centroid_cnts,
             )
