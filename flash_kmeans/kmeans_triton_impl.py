@@ -86,13 +86,20 @@ def batch_kmeans_Euclid(
     # Use atomic update for small K (avoids sort overhead)
     use_atomic = K <= 200
 
+    # Determine heuristic config once
+    heuristic_config = None
+    if use_heuristic:
+        from flash_kmeans.assign_euclid_triton import _heuristic_euclid_config
+        heuristic_config = _heuristic_euclid_config(N, K, D, device=x.device)
+
     for it in range(max_iters):
         # Compute c_sq in native dtype for speed
-        c_sq.copy_(torch.sum(centroids * centroids, dim=-1))
+        torch.sum(centroids * centroids, dim=-1, out=c_sq)
 
-        # Assignment
+        # Assignment with pre-computed config
         cluster_ids = euclid_assign_triton(
-            x, centroids, x_sq, out=out, c_sq=c_sq, use_heuristic=use_heuristic
+            x, centroids, x_sq, out=out, c_sq=c_sq,
+            config=heuristic_config, use_heuristic=False,
         )
 
         # Centroid update
