@@ -120,19 +120,22 @@ def torch_loop_centroid_update_cosine(x_norm: torch.Tensor, cluster_ids: torch.T
     return new_centroids
 
 
-def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor):
+def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
+                                  centroid_sums: torch.Tensor = None, centroid_counts: torch.Tensor = None):
     """Compute centroids for Euclidean KMeans using Triton."""
     B, N, D = x.shape
     K = old_centroids.shape[1]
 
-    centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
-    centroid_counts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
+    if centroid_sums is None:
+        centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
+    else:
+        centroid_sums.zero_()
+    if centroid_counts is None:
+        centroid_counts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
+    else:
+        centroid_counts.zero_()
 
-    total_tokens = B * N
-    BLOCK_D = 128
-    grid = (total_tokens,)
-
-    _centroid_update_kernel[grid](
+    _centroid_update_kernel[(B * N,)](
         x,
         cluster_ids,
         centroid_sums,
@@ -141,14 +144,11 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
         centroid_sums.stride(0), centroid_sums.stride(1), centroid_sums.stride(2),
         centroid_counts.stride(0), centroid_counts.stride(1),
         B, N, D, K,
-        BLOCK_D=BLOCK_D,
+        BLOCK_D=128,
     )
 
-    # Compute means; keep old centroid if empty cluster
     counts_f = centroid_counts.unsqueeze(-1).clamp(min=1).float()
     centroids = centroid_sums / counts_f
-
-    # For clusters with zero count, revert to old centroids
     zero_mask = (centroid_counts == 0).unsqueeze(-1)
     centroids = torch.where(zero_mask, old_centroids.float(), centroids)
 

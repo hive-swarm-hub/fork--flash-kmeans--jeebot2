@@ -67,7 +67,7 @@ def batch_kmeans_Euclid(
     skip_shift = tol < 0
 
     # Pre-compute squared L2 norm of all points (constant during iterations)
-    x_sq = (x ** 2).sum(dim=-1)  # (B, N)
+    x_sq = torch.sum(x * x, dim=-1)  # (B, N)
 
     if init_centroids is None:
         indices = torch.randint(0, N, (B, K), device=x.device)
@@ -88,7 +88,7 @@ def batch_kmeans_Euclid(
 
     for it in range(max_iters):
         # Compute c_sq in native dtype for speed
-        c_sq.copy_((centroids ** 2).sum(-1))
+        c_sq.copy_(torch.sum(centroids * centroids, dim=-1))
 
         # Assignment
         cluster_ids = euclid_assign_triton(
@@ -97,7 +97,10 @@ def batch_kmeans_Euclid(
 
         # Centroid update
         if use_atomic:
-            centroids_new = triton_centroid_update_euclid(x, cluster_ids, centroids)
+            centroids_new = triton_centroid_update_euclid(
+                x, cluster_ids, centroids,
+                centroid_sums=centroid_sums, centroid_counts=centroid_cnts,
+            )
         else:
             centroid_sums.zero_()
             centroid_cnts.zero_()
