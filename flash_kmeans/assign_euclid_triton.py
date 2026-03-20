@@ -112,38 +112,19 @@ def _heuristic_euclid_config(
 
     if "H100" in gpu_name:
         block_n = 128
-        block_k = 64
+        block_k = 128
         num_warps = 4
         num_stages = 1
 
-        if D >= 512:
-            block_n = 128
+        if D >= 256:
             block_k = 64
             num_warps = 8
-            num_stages = 1
-        elif D >= 256:
-            block_n = 128
-            block_k = 64
-            num_warps = 8
-            num_stages = 1
+        elif K <= 256:
+            block_k = 128
+        elif K <= 1024:
+            block_k = 128
         else:
-            # D <= 128
-            if K <= 256:
-                block_k = 64
-                num_warps = 4
-                num_stages = 1
-            elif K <= 1024:
-                block_k = 64
-                num_warps = 4
-                num_stages = 1
-            elif K <= 4096:
-                block_k = 128
-                num_warps = 4
-                num_stages = 1
-            else:
-                block_k = 128
-                num_warps = 4
-                num_stages = 1
+            block_k = 128
 
         return {
             "BLOCK_N": block_n,
