@@ -111,15 +111,58 @@ def _heuristic_euclid_config(
         }
 
     if "H100" in gpu_name:
+        # H100 tuned heuristic (more conservative on D=64 mid-K vs H200).
         block_n = 128
-        block_k = 128
+        block_k = 64
         num_warps = 4
-        num_stages = 2
+        num_stages = 1
 
-        if D >= 256:
+        if D >= 512:
+            block_n = 128
             block_k = 64
             num_warps = 8
             num_stages = 1
+        elif D >= 256:
+            block_n = 128
+            block_k = 64
+            if K <= 1024:
+                num_warps = 8
+                num_stages = 1
+            elif K <= 16384:
+                num_warps = 4
+                num_stages = 1
+            else:
+                num_warps = 8
+                num_stages = 1
+        else:
+            # D <= 128
+            if D <= 64:
+                if K <= 1024:
+                    block_k = 64
+                    num_warps = 4
+                    num_stages = 2
+                elif K <= 16384:
+                    block_k = 64
+                    num_warps = 4
+                    num_stages = 2
+                elif K <= 65536:
+                    block_k = 128
+                    num_warps = 4
+                    num_stages = 4
+                else:
+                    block_k = 64
+                    num_warps = 4
+                    num_stages = 4
+            else:
+                # D == 128
+                if K <= 65536:
+                    block_k = 128
+                    num_warps = 4
+                    num_stages = 1
+                else:
+                    block_k = 64
+                    num_warps = 4
+                    num_stages = 4
 
         return {
             "BLOCK_N": block_n,
@@ -216,42 +259,42 @@ def _euclid_assign_kernel(
         + n_offsets[:, None] * stride_x_n
         + offs_d[None, :] * stride_x_d
     )
-    x_tile = tl.load(x_ptrs, mask=n_mask[:, None], other=0.0)
+    x_tile = tl.load(x_ptrs, mask=n_mask[:, None], other=0.0, eviction_policy='evict_first')
 
     # Pre-load x_sq for the tile  (BLOCK_N,)
     xsq_ptrs = x_sq_ptr + pid_b * stride_xsq_b + n_offsets * stride_xsq_n
-    x_sq_tile = tl.load(xsq_ptrs, mask=n_mask, other=0.0).to(tl.float32)
+    x_sq_tile = tl.load(xsq_ptrs, mask=n_mask, other=0.0, eviction_policy='evict_first').to(tl.float32)
 
     # Init best distance / index
     best_dist = tl.full((BLOCK_N,), float('inf'), tl.float32)
     best_idx = tl.zeros((BLOCK_N,), tl.int32)
 
-    # ------------------------------------------------------------------
     # Iterate over centroids in chunks of BLOCK_K
-    # ------------------------------------------------------------------
     for k_start in range(0, K, BLOCK_K):
         k_offsets = k_start + tl.arange(0, BLOCK_K)
         k_offsets = k_offsets.to(tl.int64)
         k_mask = k_offsets < K
 
-        # Load centroid tile  (D, BLOCK_K)
+        # Load centroid tile (D, BLOCK_K)
         c_ptrs = (
             c_ptr
             + pid_b * stride_c_b
             + k_offsets[None, :] * stride_c_k
             + offs_d[:, None] * stride_c_d
         )
-        c_tile = tl.load(c_ptrs, mask=k_mask[None, :], other=0.0, eviction_policy="evict_last")
+        c_tile = tl.load(c_ptrs, mask=k_mask[None, :], other=0.0, eviction_policy='evict_last')
 
+        # Load precomputed c_sq (BLOCK_K,)
         csq_ptrs = c_sq_ptr + pid_b * stride_csq_b + k_offsets * stride_csq_k
-        cent_sq = tl.load(csq_ptrs, mask=k_mask, other=0.0, eviction_policy="evict_last").to(tl.float32)
+        cent_sq = tl.load(csq_ptrs, mask=k_mask, other=0.0, eviction_policy='evict_last').to(tl.float32)
 
-        cross = tl.dot(x_tile, c_tile, out_dtype=tl.float32)
+        # Cross term (BLOCK_N, BLOCK_K) = x_tile @ c_tile
+        cross = tl.dot(x_tile, c_tile, out_dtype=tl.float32, max_num_imprecise_acc=32)
 
         # Squared Euclidean distance
         dist = x_sq_tile[:, None] + cent_sq[None, :] - 2.0 * cross
 
-        # Mask out invalid centroid columns before reduction
+        # Mask invalid centroids
         dist = tl.where(k_mask[None, :], dist, float('inf'))
 
         curr_min = tl.min(dist, axis=1)

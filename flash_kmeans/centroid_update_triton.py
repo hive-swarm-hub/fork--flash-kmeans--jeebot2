@@ -121,7 +121,7 @@ def torch_loop_centroid_update_cosine(x_norm: torch.Tensor, cluster_ids: torch.T
 
 
 def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
-                                  centroid_sums: torch.Tensor = None, centroid_counts: torch.Tensor = None):
+                                  *, centroid_sums: torch.Tensor = None, centroid_counts: torch.Tensor = None):
     """Compute centroids for Euclidean KMeans using Triton."""
     B, N, D = x.shape
     K = old_centroids.shape[1]
@@ -135,24 +135,27 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
     else:
         centroid_counts.zero_()
 
-    _centroid_update_kernel[(B * N,)](
+    total_tokens = B * N
+    BLOCK_D = 128  # tuneable
+    grid = (total_tokens,)
+
+    ids_i32 = cluster_ids if cluster_ids.dtype == torch.int32 else cluster_ids.to(torch.int32)
+    _centroid_update_kernel[grid](
         x,
-        cluster_ids,
+        ids_i32,
         centroid_sums,
         centroid_counts,
         x.stride(0), x.stride(1), x.stride(2),
         centroid_sums.stride(0), centroid_sums.stride(1), centroid_sums.stride(2),
         centroid_counts.stride(0), centroid_counts.stride(1),
         B, N, D, K,
-        BLOCK_D=128,
+        BLOCK_D=BLOCK_D,
     )
 
-    counts_f = centroid_counts.unsqueeze(-1).clamp(min=1).float()
+    counts_f = centroid_counts.float().unsqueeze(-1).clamp_(min=1.0)
     centroids = (centroid_sums / counts_f).to(x.dtype)
-    zero_mask = (centroid_counts == 0).unsqueeze(-1)
-    centroids = torch.where(zero_mask, old_centroids, centroids)
-
-    return centroids
+    empty_mask = (centroid_counts == 0).unsqueeze(-1)
+    return torch.where(empty_mask, old_centroids, centroids)
 
 
 # ------------------------------ NEW: chunk-wise centroid update (sorted ids) ------------------------------
@@ -213,8 +216,7 @@ def _centroid_update_chunk_kernel(
     last_id = tl.load(cid_batch_base + last_token_idx)
     all_ids = tl.load(cid_batch_base + token_idx * stride_cluster_n, mask=valid_tok, other=-1)
 
-    all_tokens_idxs = tl.load(idx_batch_base + token_idx * stride_idx_n, mask=valid_tok, other=-1) # [BLOCK_N]
-    all_tokens_idxs = all_tokens_idxs.to(tl.int64)
+    all_tokens_idxs = tl.load(idx_batch_base + token_idx * stride_idx_n, mask=valid_tok, other=-1).to(tl.int64)
 
     for cid in range(first_id, last_id + 1):
         cluster_mask = all_ids == cid
@@ -279,7 +281,7 @@ def triton_centroid_update_sorted_cosine(x_norm: torch.Tensor, cluster_ids: torc
     return centroids
 
 def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
-                                         *, BLOCK_N: int = 256, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None, calculate_new: bool = True):
+                                         *, BLOCK_N: int = 128, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None, calculate_new: bool = True):
     """Fast centroid update for *Euclidean* KMeans assuming cluster IDs are pre-sorted.
 
     Parameters
@@ -308,21 +310,26 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     B, N, D = x.shape
     K = old_centroids.shape[1]
 
-    # Batch-wise sort of cluster assignments
-    sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1)
-    sorted_idx_int = sorted_idx.int()
+    # Batch-wise sort of cluster assignments (stable=False can be faster)
+    sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1, stable=False)
+    sorted_idx_int = sorted_idx.to(torch.int32)
 
     if centroid_sums is None:
         centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
+    else:
+        centroid_sums.zero_()
 
     if centroid_cnts is None:
         centroid_cnts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
+    else:
+        centroid_cnts.zero_()
 
     grid = (triton.cdiv(N, BLOCK_N), B)
+    sorted_cids = sorted_cluster_ids if sorted_cluster_ids.dtype == torch.int32 else sorted_cluster_ids.to(torch.int32)
     _centroid_update_chunk_kernel[grid](
-        x,
-        sorted_idx_int,
-        sorted_cluster_ids,
+        x,                       # original features
+        sorted_idx_int,          # gather indices
+        sorted_cids,
         centroid_sums,
         centroid_cnts,
         x.stride(0), x.stride(1), x.stride(2),
@@ -335,11 +342,10 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     )
 
     if calculate_new:
-        counts_f = centroid_cnts.unsqueeze(-1).clamp(min=1).float()
+        counts_f = centroid_cnts.float().unsqueeze(-1).clamp_(min=1.0)
         centroids = (centroid_sums / counts_f).to(x.dtype)
         empty_mask = (centroid_cnts == 0).unsqueeze(-1)
-        centroids = torch.where(empty_mask, old_centroids, centroids)
-        return centroids
+        return torch.where(empty_mask, old_centroids, centroids)
     else:
         return None
 # ------------------------------ END new implementation ------------------------------
