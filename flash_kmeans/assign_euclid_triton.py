@@ -111,7 +111,6 @@ def _heuristic_euclid_config(
         }
 
     if "H100" in gpu_name:
-        # H100 tuned heuristic (more conservative on D=64 mid-K vs H200).
         block_n = 128
         block_k = 64
         num_warps = 4
@@ -125,51 +124,26 @@ def _heuristic_euclid_config(
         elif D >= 256:
             block_n = 128
             block_k = 64
-            if K <= 1024:
-                num_warps = 8
+            num_warps = 4
+            num_stages = 1
+        else:
+            # D <= 128
+            if K <= 256:
+                block_k = 64
+                num_warps = 4
                 num_stages = 1
-            elif K <= 16384:
+            elif K <= 1024:
+                block_k = 64
+                num_warps = 4
+                num_stages = 1
+            elif K <= 4096:
+                block_k = 128
                 num_warps = 4
                 num_stages = 1
             else:
-                num_warps = 8
+                block_k = 128
+                num_warps = 4
                 num_stages = 1
-        else:
-            # D <= 128
-            if D <= 64:
-                if K <= 1024:
-                    block_k = 64
-                    num_warps = 4
-                    num_stages = 2
-                elif K <= 16384:
-                    block_k = 64
-                    num_warps = 4
-                    num_stages = 2
-                elif K <= 65536:
-                    block_k = 128
-                    num_warps = 4
-                    num_stages = 4
-                else:
-                    block_k = 64
-                    num_warps = 4
-                    num_stages = 4
-            else:
-                # D == 128
-                if K <= 1024:
-                    block_k = 64
-                    num_warps = 4
-                    num_stages = 1
-                elif K <= 65536:
-                    block_k = 128
-                    num_warps = 8
-                    num_stages = 2
-                else:
-                    block_k = 64
-                    num_warps = 4
-                    num_stages = 4
-
-        if N < 65536:
-            block_n = 64
 
         return {
             "BLOCK_N": block_n,
@@ -267,14 +241,13 @@ def _euclid_assign_kernel(
         + offs_d[None, :] * stride_x_d
     )
     x_tile = tl.load(x_ptrs, mask=n_mask[:, None], other=0.0)
-    x_tile = x_tile  # compute in f32
 
     # Pre-load x_sq for the tile  (BLOCK_N,)
     xsq_ptrs = x_sq_ptr + pid_b * stride_xsq_b + n_offsets * stride_xsq_n
     x_sq_tile = tl.load(xsq_ptrs, mask=n_mask, other=0.0).to(tl.float32)
 
     # Init best distance / index
-    best_dist = tl.full((BLOCK_N,), 3.4e38, tl.float32)  # large number
+    best_dist = tl.full((BLOCK_N,), float('inf'), tl.float32)
     best_idx = tl.zeros((BLOCK_N,), tl.int32)
 
     # ------------------------------------------------------------------
@@ -293,7 +266,6 @@ def _euclid_assign_kernel(
             + offs_d[:, None] * stride_c_d
         )
         c_tile = tl.load(c_ptrs, mask=k_mask[None, :], other=0.0)
-        c_tile = c_tile
 
         # load c_sq for the tile  (BLOCK_K,)
         csq_ptrs = c_sq_ptr + pid_b * stride_csq_b + k_offsets * stride_csq_k
@@ -307,10 +279,9 @@ def _euclid_assign_kernel(
 
         # Squared Euclidean distance
         dist = x_sq_tile[:, None] + cent_sq[None, :] - 2.0 * cross
-        dist = tl.maximum(dist, 0.0)
 
         # Mask out invalid centroid columns before reduction
-        dist = tl.where(k_mask[None, :], dist, 3.4e38)
+        dist = tl.where(k_mask[None, :], dist, float('inf'))
 
         curr_min = tl.min(dist, axis=1)
         curr_idx = tl.argmin(dist, axis=1)
@@ -469,7 +440,7 @@ def euclid_assign_triton(
     if out is None:
         out = torch.empty((B, N), device=x.device, dtype=torch.int32)
     if c_sq is None:
-        c_sq = (centroids.to(torch.float32) ** 2).sum(-1)
+        c_sq = (centroids ** 2).sum(-1)
 
     # Strides (in elements)
     stride_x_b, stride_x_n, stride_x_d = x.stride()

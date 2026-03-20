@@ -62,50 +62,51 @@ def batch_kmeans_Euclid(
     *,
     use_heuristic=True,
 ):
-    """
-    Batched KMeans clustering in PyTorch using Euclidean distance.
-
-    Args:
-        x: Tensor of shape (B, N, D), batch_size B, N points per batch, D dims.
-        n_clusters: Number of clusters.
-        max_iters: Max number of iterations.
-        tol: Relative tolerance for center movement.
-        verbose: Print loss for each iter.
-        use_heuristic: Use heuristic Triton config (skip autotune).
-    Returns:
-        cluster_ids: (B, N) LongTensor, cluster assignment for each point.
-        centroids: (B, n_clusters, D) final cluster centers.
-    """
     B, N, D = x.shape
+    K = n_clusters
+    skip_shift = tol < 0
 
     # Pre-compute squared L2 norm of all points (constant during iterations)
     x_sq = (x ** 2).sum(dim=-1)  # (B, N)
 
     if init_centroids is None:
-        # Randomly select initial centers from x
-        indices = torch.randint(0, N, (B, n_clusters), device=x.device)
-        centroids = torch.gather(
-            x,
-            dim=1,
-            index=indices[..., None].expand(-1, -1, D)
-        )  # (B, n_clusters, D)
+        indices = torch.randint(0, N, (B, K), device=x.device)
+        centroids = torch.gather(x, 1, indices[..., None].expand(-1, -1, D))
     else:
         centroids = init_centroids
 
-    centroids = centroids.view(B, n_clusters, D)
+    centroids = centroids.view(B, K, D)
+
+    # Pre-allocate reusable buffers
+    out = torch.empty((B, N), device=x.device, dtype=torch.int32)
+    c_sq = torch.empty((B, K), device=x.device, dtype=torch.float32)
+
+    # Choose centroid update strategy based on K
+    use_atomic = K <= 1024
 
     for it in range(max_iters):
-        # ---- compiled single iteration ----
-        centroids_new, center_shift, cluster_ids = _euclid_iter_compiled(
-            x, x_sq, centroids, use_heuristic
+        # Compute c_sq in native dtype for speed
+        c_sq.copy_((centroids ** 2).sum(-1))
+
+        # Assignment
+        cluster_ids = euclid_assign_triton(
+            x, centroids, x_sq, out=out, c_sq=c_sq, use_heuristic=use_heuristic
         )
 
-        # 4. Check for convergence
-        if verbose:
-            print(f"Iter {it}, center shift: {center_shift.item():.6f}")
-        if center_shift < tol:
-            break
-        centroids = centroids_new.clone()
+        # Centroid update
+        if use_atomic:
+            centroids_new = triton_centroid_update_euclid(x, cluster_ids, centroids)
+        else:
+            centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids)
+
+        if not skip_shift:
+            center_shift = (centroids_new - centroids).norm(dim=-1).max()
+            if verbose:
+                print(f"Iter {it}, center shift: {center_shift.item():.6f}")
+            if center_shift < tol:
+                break
+
+        centroids = centroids_new
 
     return cluster_ids, centroids, it + 1
 
