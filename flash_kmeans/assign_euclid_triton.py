@@ -300,7 +300,7 @@ def _euclid_assign_kernel(
         # cent_sq = tl.sum(c_tile * c_tile, axis=0).to(tl.float32)
 
         # Compute cross term (BLOCK_N, BLOCK_K) = x_tile @ c_tile
-        cross = tl.dot(x_tile, c_tile).to(tl.float32)  # float32
+        cross = tl.dot(x_tile, c_tile, max_num_imprecise_acc=32).to(tl.float32)
 
         # Squared Euclidean distance
         dist = x_sq_tile[:, None] + cent_sq[None, :] - 2.0 * cross
