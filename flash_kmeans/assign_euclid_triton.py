@@ -18,6 +18,44 @@ def _ceil_div(a: int, b: int) -> int:
     return (a + b - 1) // b
 
 
+@triton.jit
+def _compute_sq_norms_kernel(
+    x_ptr, out_ptr,
+    stride_x_b, stride_x_n, stride_x_d,
+    stride_out_b, stride_out_n,
+    N: tl.constexpr, D: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    pid_b = tl.program_id(1)
+    pid_b = pid_b.to(tl.int64)
+    n_idx = pid.to(tl.int64)
+    if n_idx >= N:
+        return
+    offs_d = tl.arange(0, D).to(tl.int64)
+    x_ptrs = x_ptr + pid_b * stride_x_b + n_idx * stride_x_n + offs_d * stride_x_d
+    x_vals = tl.load(x_ptrs).to(tl.float32)
+    sq_norm = tl.sum(x_vals * x_vals)
+    tl.store(out_ptr + pid_b * stride_out_b + n_idx * stride_out_n, sq_norm)
+
+
+def compute_sq_norms(x, out=None):
+    """Compute squared L2 norms using Triton (fused multiply + reduce)."""
+    if x.ndim == 3:
+        B, N, D = x.shape
+    else:
+        B, N, D = 1, x.shape[0], x.shape[1]
+        x = x.unsqueeze(0)
+    if out is None:
+        out = torch.empty((B, N), device=x.device, dtype=torch.float32 if x.dtype == torch.float32 else x.dtype)
+    _compute_sq_norms_kernel[(N, B)](
+        x, out,
+        x.stride(0), x.stride(1), x.stride(2),
+        out.stride(0), out.stride(1),
+        N=N, D=D,
+    )
+    return out
+
+
 # -----------------------------------------------------------------------------
 # Auto-tuning setup – explore various tile sizes / warp counts
 # -----------------------------------------------------------------------------

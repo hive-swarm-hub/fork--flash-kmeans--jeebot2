@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.cuda import nvtx
-from flash_kmeans.assign_euclid_triton import euclid_assign_triton, cosine_assign_triton, _heuristic_euclid_config
+from flash_kmeans.assign_euclid_triton import euclid_assign_triton, cosine_assign_triton, _heuristic_euclid_config, compute_sq_norms
 from flash_kmeans.centroid_update_triton import triton_centroid_update_cosine, triton_centroid_update_euclid, triton_centroid_update_sorted_euclid, triton_centroid_update_sorted_cosine, torch_centroid_update_euclid
 from tqdm import trange
 
@@ -110,7 +110,7 @@ def batch_kmeans_Euclid(
     update_block_n = 128
 
     for it in range(max_iters):
-        torch.sum(centroids * centroids, dim=-1, out=c_sq)
+        compute_sq_norms(centroids, out=c_sq)
 
         cluster_ids = euclid_assign_triton(x, centroids, x_sq, out=out, c_sq=c_sq,
                                            config=cached_config, use_heuristic=False)
