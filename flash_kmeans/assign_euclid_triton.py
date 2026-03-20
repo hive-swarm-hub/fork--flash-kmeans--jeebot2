@@ -240,17 +240,12 @@ def _euclid_assign_kernel(
             + k_offsets[None, :] * stride_c_k
             + offs_d[:, None] * stride_c_d
         )
-        c_tile = tl.load(c_ptrs, mask=k_mask[None, :], other=0.0)
+        c_tile = tl.load(c_ptrs, mask=k_mask[None, :], other=0.0, eviction_policy="evict_last")
 
-        # load c_sq for the tile  (BLOCK_K,)
         csq_ptrs = c_sq_ptr + pid_b * stride_csq_b + k_offsets * stride_csq_k
         cent_sq = tl.load(csq_ptrs, mask=k_mask, other=0.0).to(tl.float32)
 
-        # # Compute centroid squared norms (BLOCK_K,)
-        # cent_sq = tl.sum(c_tile * c_tile, axis=0).to(tl.float32)
-
-        # Compute cross term (BLOCK_N, BLOCK_K) = x_tile @ c_tile
-        cross = tl.dot(x_tile, c_tile).to(tl.float32)  # float32
+        cross = tl.dot(x_tile, c_tile, out_dtype=tl.float32)
 
         # Squared Euclidean distance
         dist = x_sq_tile[:, None] + cent_sq[None, :] - 2.0 * cross
