@@ -94,18 +94,26 @@ def batch_kmeans_Euclid(
 
     centroids = centroids.view(B, n_clusters, D)
 
-    for it in range(max_iters):
-        # ---- compiled single iteration ----
-        centroids_new, center_shift, cluster_ids = _euclid_iter_compiled(
-            x, x_sq, centroids, use_heuristic
-        )
+    # Pre-allocate output buffer
+    out = torch.empty((B, N), device=x.device, dtype=torch.int32)
+    check_convergence = tol > 0
 
-        # 4. Check for convergence
-        if verbose:
-            print(f"Iter {it}, center shift: {center_shift.item():.6f}")
-        if center_shift < tol:
-            break
-        centroids = centroids_new.clone()
+    for it in range(max_iters):
+        # Pre-compute centroid squared norms
+        c_sq = (centroids.float() ** 2).sum(-1)
+
+        cluster_ids = euclid_assign_triton(x, centroids, x_sq, out=out, c_sq=c_sq,
+                                           use_heuristic=use_heuristic)
+        centroids_new = triton_centroid_update_sorted_euclid(x, cluster_ids, centroids)
+
+        if check_convergence or verbose:
+            center_shift = (centroids_new - centroids).norm(dim=-1).max()
+            if verbose:
+                print(f"Iter {it}, center shift: {center_shift.item():.6f}")
+            if center_shift < tol:
+                break
+
+        centroids = centroids_new
 
     return cluster_ids, centroids, it + 1
 
