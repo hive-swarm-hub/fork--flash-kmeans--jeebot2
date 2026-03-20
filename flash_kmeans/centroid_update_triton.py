@@ -152,10 +152,16 @@ def triton_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, ol
         BLOCK_D=BLOCK_D,
     )
 
-    counts_f = centroid_counts.float().unsqueeze(-1).clamp_(min=1.0)
-    centroids = (centroid_sums / counts_f).to(x.dtype)
-    empty_mask = (centroid_counts == 0).unsqueeze(-1)
-    return torch.where(empty_mask, old_centroids, centroids)
+    centroids_out = torch.empty_like(old_centroids)
+    _finalize_centroids_kernel[(_ceil_div(K, 1), B)](
+        centroid_sums, centroid_counts, old_centroids, centroids_out,
+        centroid_sums.stride(0), centroid_sums.stride(1), centroid_sums.stride(2),
+        centroid_counts.stride(0), centroid_counts.stride(1),
+        old_centroids.stride(0), old_centroids.stride(1), old_centroids.stride(2),
+        centroids_out.stride(0), centroids_out.stride(1), centroids_out.stride(2),
+        K=K, D=D,
+    )
+    return centroids_out
 
 
 # ------------------------------ NEW: chunk-wise centroid update (sorted ids) ------------------------------
@@ -342,12 +348,46 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     )
 
     if calculate_new:
-        counts_f = centroid_cnts.float().unsqueeze(-1).clamp_(min=1.0)
-        centroids = (centroid_sums / counts_f).to(x.dtype)
-        empty_mask = (centroid_cnts == 0).unsqueeze(-1)
-        return torch.where(empty_mask, old_centroids, centroids)
+        centroids_out = torch.empty_like(old_centroids)
+        _finalize_centroids_kernel[(_ceil_div(K, 1), B)](
+            centroid_sums, centroid_cnts, old_centroids, centroids_out,
+            centroid_sums.stride(0), centroid_sums.stride(1), centroid_sums.stride(2),
+            centroid_cnts.stride(0), centroid_cnts.stride(1),
+            old_centroids.stride(0), old_centroids.stride(1), old_centroids.stride(2),
+            centroids_out.stride(0), centroids_out.stride(1), centroids_out.stride(2),
+            K=K, D=D,
+        )
+        return centroids_out
     else:
         return None
+@triton.jit
+def _finalize_centroids_kernel(
+    sums_ptr, counts_ptr, old_ptr, out_ptr,
+    stride_s_b, stride_s_k, stride_s_d,
+    stride_c_b, stride_c_k,
+    stride_o_b, stride_o_k, stride_o_d,
+    stride_out_b, stride_out_k, stride_out_d,
+    K: tl.constexpr, D: tl.constexpr,
+):
+    """Fused centroid finalization: divide sums by counts, handle empty clusters."""
+    pid_k = tl.program_id(0)
+    pid_b = tl.program_id(1)
+    pid_b = pid_b.to(tl.int64)
+    k_idx = pid_k.to(tl.int64)
+    if k_idx >= K:
+        return
+    count = tl.load(counts_ptr + pid_b * stride_c_b + k_idx * stride_c_k)
+    offs_d = tl.arange(0, D).to(tl.int64)
+    if count > 0:
+        count_f = count.to(tl.float32)
+        sums = tl.load(sums_ptr + pid_b * stride_s_b + k_idx * stride_s_k + offs_d * stride_s_d)
+        result = (sums / count_f).to(tl.float16)
+        tl.store(out_ptr + pid_b * stride_out_b + k_idx * stride_out_k + offs_d * stride_out_d, result)
+    else:
+        old_vals = tl.load(old_ptr + pid_b * stride_o_b + k_idx * stride_o_k + offs_d * stride_o_d)
+        tl.store(out_ptr + pid_b * stride_out_b + k_idx * stride_out_k + offs_d * stride_out_d, old_vals)
+
+
 def torch_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
                                   *, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None):
     """Fast centroid update using PyTorch scatter_add_ (no sort needed)."""
