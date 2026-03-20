@@ -84,7 +84,7 @@ def batch_kmeans_Euclid(
     centroid_cnts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
 
     # Use atomic update for small K (avoids sort overhead)
-    use_atomic = K <= 200
+    use_atomic = K <= 256
 
     # Determine heuristic config once
     heuristic_config = None
