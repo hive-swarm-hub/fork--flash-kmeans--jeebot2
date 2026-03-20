@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.cuda import nvtx
 from flash_kmeans.assign_euclid_triton import euclid_assign_triton, cosine_assign_triton, _heuristic_euclid_config
-from flash_kmeans.centroid_update_triton import triton_centroid_update_cosine, triton_centroid_update_euclid, triton_centroid_update_sorted_euclid, triton_centroid_update_sorted_cosine
+from flash_kmeans.centroid_update_triton import triton_centroid_update_cosine, triton_centroid_update_euclid, triton_centroid_update_sorted_euclid, triton_centroid_update_sorted_cosine, torch_centroid_update_euclid
 from tqdm import trange
 
 # -------------------- Compiled single-iteration kernels --------------------

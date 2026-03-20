@@ -310,9 +310,9 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
     B, N, D = x.shape
     K = old_centroids.shape[1]
 
-    # Batch-wise sort of cluster assignments (stable=False can be faster)
+    # Batch-wise sort of cluster assignments
     sorted_cluster_ids, sorted_idx = torch.sort(cluster_ids, dim=-1, stable=False)
-    sorted_idx_int = sorted_idx.to(torch.int32)
+    sorted_idx_int = sorted_idx.int()
 
     if centroid_sums is None:
         centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
@@ -348,6 +348,33 @@ def triton_centroid_update_sorted_euclid(x: torch.Tensor, cluster_ids: torch.Ten
         return torch.where(empty_mask, old_centroids, centroids)
     else:
         return None
+def torch_centroid_update_euclid(x: torch.Tensor, cluster_ids: torch.Tensor, old_centroids: torch.Tensor,
+                                  *, centroid_sums: torch.Tensor = None, centroid_cnts: torch.Tensor = None):
+    """Fast centroid update using PyTorch scatter_add_ (no sort needed)."""
+    B, N, D = x.shape
+    K = old_centroids.shape[1]
+
+    if centroid_sums is None:
+        centroid_sums = torch.zeros((B, K, D), device=x.device, dtype=torch.float32)
+    else:
+        centroid_sums.zero_()
+
+    if centroid_cnts is None:
+        centroid_cnts = torch.zeros((B, K), device=x.device, dtype=torch.int32)
+    else:
+        centroid_cnts.zero_()
+
+    idx_expand = cluster_ids.to(torch.int64).unsqueeze(-1).expand(-1, -1, D)
+    centroid_sums.scatter_add_(1, idx_expand, x.float())
+
+    ones = torch.ones((B, N), device=x.device, dtype=torch.int32)
+    centroid_cnts.scatter_add_(1, cluster_ids.to(torch.int64), ones)
+
+    counts_f = centroid_cnts.float().unsqueeze(-1).clamp_(min=1.0)
+    centroids = (centroid_sums / counts_f).to(x.dtype)
+    empty_mask = (centroid_cnts == 0).unsqueeze(-1)
+    return torch.where(empty_mask, old_centroids, centroids)
+
 # ------------------------------ END new implementation ------------------------------
 
 
